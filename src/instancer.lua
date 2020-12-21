@@ -1,15 +1,20 @@
 local instancer = {}
 simploo.instancer = instancer
 
-instancer.classFormats = {}
 instancer.metafunctions = {"__index", "__newindex", "__tostring", "__call", "__concat", "__unm", "__add", "__sub", "__mul", "__div", "__mod", "__pow", "__eq", "__lt", "__le"}
+
+local random = math.random
+local function uuid()
+    local template ='xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
+    return string.gsub(template, '[xy]', function (c)
+        local v = (c == 'x') and random(0, 0xf) or random(8, 0xb)
+        return string.format('%x', v)
+    end)
+end
 
 function instancer:initClass(classFormat)
     -- Call the beforeInitClass hook
     local classFormat = simploo.hook:fire("beforeInstancerInitClass", classFormat) or classFormat
-
-    -- Store class format
-    instancer.classFormats[classFormat.name] = classFormat
 
     -- Create instance
     local classInstance = {}
@@ -20,12 +25,12 @@ function instancer:initClass(classFormat)
         -- return obj and string.sub(tostring(obj), 0, 7 + 6) == "SimplooObject" and obj.className and obj == _G[obj.className]
     end
 
-
     -- Base variables
     classInstance.className = classFormat.name
     classInstance.members = {}
     classInstance.instance = false
     classInstance.privateCallDepth = 0
+    classInstance.modded = classFormat.modded
 
     -- Setup a lua environment for all usings, which we can apply to all members later
     local usingsEnv = {}
@@ -43,18 +48,27 @@ function instancer:initClass(classFormat)
         })
     end
 
-    -- Copy members from provided parents in the class format
-    for _, parentName in pairs(classFormat.parents) do
-        -- Retrieve parent from an earlier defined class that's global, or from the usings table.
+    local moddedInstance = _G[classInstance.className] or usingsEnv[classInstance.className]
+
+    if classFormat.modded and not moddedInstance then
+        error(string.format("class %s: can't mod a undefined class", classInstance.className))
+    end
+
+    if classFormat.modded and moddedInstance then
+        classFormat.parent = classInstance.className
+        classInstance.className = classInstance.className .. uuid()
+    end
+
+    if classFormat.parent ~= "" then
+        local parentName = classFormat.parent
+
+         -- Retrieve parent from an earlier defined class that's global, or from the usings table.
         local parentInstance = _G[parentName] or usingsEnv[parentName]
 
         if not parentInstance then
             error(string.format("class %s: could not find parent %s", classInstance.className, parentName))
         end
-        
-        -- Get the full parent name, because for usings it might not be complete
-        local fullParentName = parentInstance.className
-
+ 
         -- Add parent classInstance to child
         local newMember = {}
         newMember.owner = classInstance
@@ -64,9 +78,14 @@ function instancer:initClass(classFormat)
         classInstance.members[parentName] = newMember
         classInstance.members[self:classNameFromFullPath(parentName)] = newMember
 
-        -- Add variables from parents to child
+        -- Add variables from parent to child
         for parentMemberName, _ in pairs(parentInstance.members) do
             local parentMember = parentInstance.members[parentMemberName]
+
+            -- If we are in case, it's another child of modded class, we need to skip the instance of class name, so we don't override it in follow instructions
+            if classFormat.modded and parentInstance.modded and parentMemberName == parentName then
+                goto continue
+            end
 
             if not simploo.config["production"] then
 
@@ -96,6 +115,8 @@ function instancer:initClass(classFormat)
                 -- Assign the member by reference, always
                 classInstance.members[parentMemberName] = parentMember
             end
+
+            ::continue::
         end
     end
 
@@ -125,6 +146,14 @@ function instancer:initClass(classFormat)
                     return table.unpack(ret) 
                 end
             end
+        end
+
+        if memberData.modifiers.modded and not classFormat.modded then
+            error(string.format("class %s: can not use modded on function if class is not modded", classInstance.className))
+        end
+
+        if memberData.modifiers.modded and not moddedInstance.members[memberName] then
+            error(string.format("class %s: can not mod a function that doesn't exist", classInstance.className))
         end
 
         classInstance.members[memberName] = newMember
@@ -166,7 +195,9 @@ function instancer:initClass(classFormat)
         local function markAsInstanceRecursively(instance)
             instance.instance = true
 
-            for parentName, parentInstance in pairs(instance:get_parents()) do
+            local parentInstance = instance:get_parent()
+            if parentInstance then
+                
                 parentInstance.instance = true
 
                 markAsInstanceRecursively(parentInstance)
@@ -186,18 +217,28 @@ function instancer:initClass(classFormat)
             end
 
             simploo.util.addGcCallback(copy, function()
-                if copy.members["__finalize"].owner == copy then
-                    copy:__finalize()
+                local currClass = copy
+                while currClass do
+                    currClass:__finalize()
+                    currClass = currClass:get_parent()
                 end
             end)
 
-            if copy.members["__construct"].owner == copy then -- If the class has a constructor member that it owns (so it is not a reference to the parent constructor)
-                if self and self == classInstance then -- The :new() syntax was used, because 'self' is the same as the original class instance
-                    copy:__construct(...)
-                else -- The .new() syntax was used, because 'self' is not a class. 'self' is now actually first argument that was passed, so we need to pass it along
-                    copy:__construct(self, ...)
+            do
+                local currClass = copy
+
+                while currClass do
+                    if self and self == classInstance then -- The :new() syntax was used, because 'self' is the same as the original class instance
+                        currClass:__construct(...)
+                    else -- The .new() syntax was used, because 'self' is not a class. 'self' is now actually first argument that was passed, so we need to pass it along
+                        currClass:__construct(self, ...)
+                    end
+
+                    currClass = currClass:get_parent()
                 end
             end
+
+            
             
             -- If our hook returns a different object, use that instead.
             local copy = simploo.hook:fire("afterInstancerInstanceNew", copy) or copy
@@ -215,8 +256,8 @@ function instancer:initClass(classFormat)
         end
 
         function classInstance:instance_of(className)
-            for _, parentName in pairs(classFormat.parents) do
-                if self[parentName]:instance_of(className) then
+            if classFormat.parent ~= "" then
+                if self[classFormat.parent]:instance_of(className) then
                     return true
                 end
             end
@@ -224,14 +265,12 @@ function instancer:initClass(classFormat)
             return self.className == className
         end
 
-        function classInstance:get_parents()
-            local t = {}
-
-            for _, parentName in pairs(classFormat.parents) do
-                t[parentName] = self[parentName]
+        function classInstance:get_parent()
+            if classFormat.parent ~= "" then
+                return self[classFormat.parent]
+            else
+                return nil
             end
-
-            return t
         end
     end
     
@@ -348,6 +387,13 @@ function instancer:initClass(classFormat)
     
     -- Initialize the instance for use as a class
     self:registerClassInstance(classInstance)
+
+    if classFormat.modded then
+        _G[classFormat.parent] = classInstance
+        if usingsEnv[classFormat.parent] then
+            usingsEnv[classFormat.parent] = classInstance
+        end
+    end
 
     simploo.hook:fire("afterInstancerInitClass", classFormat, classInstance)
 

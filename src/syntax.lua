@@ -5,12 +5,31 @@ simploo.syntax = syntax
 local activeNamespace = false
 local activeUsings = {}
 
+function syntax.moddedClass(var)
+    if not simploo.parser.instance then
+        error("calling modded without calling class first")
+    end
+
+    if simploo.parser.instance.classParent ~= "" then
+        error("don't use extends on modded class")
+    end
+
+    if type(var) ~= "string" then
+        error("You need to use string var right after modded keyword")
+    end
+
+    simploo.parser.instance:modded()
+
+    return simploo.parser.instance
+end
+
 function syntax.class(className, classOperation)
     if simploo.parser.instance then
         error(string.format("starting new class named %s when previous class named %s has not yet been registered", className, simploo.parser.instance.className))
     end
 
-    simploo.parser.instance = simploo.parser:new(onFinished)
+    simploo.parser.instance = simploo.parser:new()
+
     simploo.parser.instance:setOnFinished(function(self, parserOutput)
         -- Set parser instance to nil first, before calling the instancer
 		-- That means that if the instancer errors out, at least the bugging instance is cleared and not gonna be used again.
@@ -41,7 +60,7 @@ function syntax.class(className, classOperation)
 end
 
 function syntax.extends(parents)
-   if not simploo.parser.instance then
+    if not simploo.parser.instance then
         error("calling extends without calling class first")
     end
 

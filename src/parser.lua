@@ -2,13 +2,13 @@ local parser = {}
 simploo.parser = parser
 
 parser.instance = false
-parser.modifiers = {"public", "private", "protected", "static", "const", "meta", "abstract"}
+parser.modifiers = {"public", "private", "protected", "static", "const", "meta", "abstract", "modded"}
 
 -- Parses the simploo class syntax into the following table format:
 --
 -- {
 --     name = "ExampleClass",
---     parents = {"ExampleParent1", "ExampleParent2"},
+--     parent = "ExampleParent1",
 --     functions = {
 --         exampleFunction = {value = function() ... end, modifiers = {public = true, static = true, ...}}
 --     }
@@ -20,9 +20,10 @@ parser.modifiers = {"public", "private", "protected", "static", "const", "meta",
 function parser:new()
     local object = {}
     object.className = ""
-    object.classParents = {}
+    object.classParent = ""
     object.classMembers = {}
     object.classUsings = {}
+    object.classModded = false
 
     object.onFinishedData = false
     object.onFinished = function(self, output)
@@ -38,6 +39,10 @@ function parser:new()
         end
     end
 
+    function object:modded()
+        self.classModded = true
+    end
+
     function object:class(className, classOperation)
         self.className = className
 
@@ -51,8 +56,18 @@ function parser:new()
     end
 
     function object:extends(parentsString)
-        for className in string.gmatch(parentsString, "([^,^%s*]+)") do
-            table.insert(self.classParents, className)
+        local regex = "([^,^%s*]+)"
+
+        local _, count = string.gsub(parentsString, regex, "%1")
+
+        if (count > 1) then
+            error("Can't extend from multiple parents")
+        end
+
+        local className = string.match(parentsString, regex)
+
+        if className then
+            self.classParent = className
         end
     end
 
@@ -63,9 +78,10 @@ function parser:new()
 
         local output = {}
         output.name = self.className
-        output.parents = self.classParents
+        output.parent = self.classParent
         output.members = self.classMembers
         output.usings = self.classUsings
+        output.modded = self.classModded
         
         self:onFinished(output)
     end
