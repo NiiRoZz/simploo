@@ -3,5 +3,6 @@ instancer_constructor_arg_pass.lua
 instances_hierarchypassthrough.lua
 object_permissions.lua
 testhooks.lua
+benchmark.lua
 modded_class.lua
 modded_class_not_defined.lua
