@@ -4,12 +4,15 @@ function TestModdedClass:testInstantiation()
     A_CALLED = false
     A_MODDED_1_CALLED = false
     A_MODDED_2_CALLED = false
+    A_TESTVAR = 0
 
     class "A" {
         public {
             func = function(self)
                 A_CALLED = true
             end;
+
+            testVar = 10;
         };
     }
 
@@ -20,6 +23,8 @@ function TestModdedClass:testInstantiation()
                     self.A:func()
                     A_MODDED_1_CALLED = true
                 end;
+
+                testVar = 50;
             };
         };
     }
@@ -30,6 +35,7 @@ function TestModdedClass:testInstantiation()
                 func = function(self)
                     self.A:func()
                     A_MODDED_2_CALLED = true
+                    A_TESTVAR = self.testVar
                 end;
             };
         };
@@ -41,6 +47,7 @@ function TestModdedClass:testInstantiation()
     assertTrue(A_CALLED)
     assertTrue(A_MODDED_1_CALLED)
     assertTrue(A_MODDED_2_CALLED)
+    assertEquals(A_TESTVAR, 50)
 
     C_CONSTRUCT_CALLED = false
     D_CONSTRUCT_CALLED = false
